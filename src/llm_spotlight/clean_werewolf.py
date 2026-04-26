@@ -18,20 +18,48 @@ from tqdm import tqdm
 
 DEFAULT_DATASET = "ReneeYe/werewolf_game_reasoning"
 
-PLAYER_NAMES = {
-    1: "Alice",
-    2: "Bob",
-    3: "Charlie",
-    4: "Diana",
-    5: "Ethan",
-    6: "Fiona",
-    7: "George",
-    8: "Hannah",
-    9: "Ian",
-    10: "Jack",
-    11: "Kate",
-    12: "Liam",
-}
+NAME_POOL = [
+    "Alice",
+    "Bob",
+    "Charlie",
+    "Diana",
+    "Ethan",
+    "Fiona",
+    "George",
+    "Hannah",
+    "Ian",
+    "Jack",
+    "Kate",
+    "Liam",
+    "Mia",
+    "Noah",
+    "Olivia",
+    "Paul",
+    "Quinn",
+    "Rachel",
+    "Samuel",
+    "Tina",
+    "Uma",
+    "Victor",
+    "Wendy",
+    "Xavier",
+    "Yvonne",
+    "Zach",
+    "Amelia",
+    "Brian",
+    "Clara",
+    "Daniel",
+    "Emma",
+    "Felix",
+    "Grace",
+    "Henry",
+    "Isabella",
+    "Jason",
+    "Laura",
+    "Martin",
+    "Nora",
+    "Oscar",
+]
 
 GAME_PROMPT = """You are playing a digital version of the social deduction game Werewolf (also known as Mafia).
 - Keep your answers strictly under 500 words.
@@ -102,6 +130,7 @@ PLAYER_TOKEN_RE = re.compile(
     re.I,
 )
 PLAYER_LIST_RE = re.compile(r"Player\(s\)\s*((?:\d+\s*,\s*)*\d+)")
+CHINESE_RE = re.compile(r"[\u4e00-\u9fff]")
 CJK_PUNCT_TRANSLATION = str.maketrans({"，": ", ", "。": ".", "；": "; ", "：": ": ", "！": "!", "？": "?"})
 
 TRANSLATION_FIXES: list[tuple[re.Pattern[str], str]] = [
@@ -139,6 +168,7 @@ class CleanStats:
     kept: int = 0
     dropped_parse_error: int = 0
     dropped_unsupported_schema: int = 0
+    dropped_chinese: int = 0
     player_name_replacements: int = 0
     translation_fixes: int = 0
 
@@ -152,15 +182,18 @@ def normalize_whitespace(text: Any) -> str:
     return text.strip()
 
 
-def player_name(number: str | int) -> str:
-    return PLAYER_NAMES.get(int(number), f"Player{int(number)}")
+def player_name(number: str | int, name_map: dict[int, str]) -> str:
+    player_number = int(number)
+    if player_number not in name_map:
+        name_map[player_number] = NAME_POOL[len(name_map) % len(NAME_POOL)]
+    return name_map[player_number]
 
 
-def replace_player_names(text: Any, stats: CleanStats) -> str:
+def replace_player_names(text: Any, stats: CleanStats, name_map: dict[int, str]) -> str:
     text = normalize_whitespace(text)
 
     def replace_list(match: re.Match[str]) -> str:
-        names = [player_name(num) for num in re.findall(r"\d+", match.group(1))]
+        names = [player_name(num, name_map) for num in re.findall(r"\d+", match.group(1))]
         stats.player_name_replacements += len(names)
         return ", ".join(names)
 
@@ -169,7 +202,7 @@ def replace_player_names(text: Any, stats: CleanStats) -> str:
     def replace_token(match: re.Match[str]) -> str:
         num = next(group for group in match.groups() if group is not None)
         stats.player_name_replacements += 1
-        return player_name(num)
+        return player_name(num, name_map)
 
     return PLAYER_TOKEN_RE.sub(replace_token, text)
 
@@ -182,8 +215,8 @@ def fix_translated_terms(text: Any, stats: CleanStats) -> str:
     return text
 
 
-def clean_text(text: Any, stats: CleanStats) -> str:
-    return fix_translated_terms(replace_player_names(text, stats), stats)
+def clean_text(text: Any, stats: CleanStats, name_map: dict[int, str]) -> str:
+    return fix_translated_terms(replace_player_names(text, stats, name_map), stats)
 
 
 def parse_json(value: Any) -> dict[str, Any]:
@@ -221,45 +254,45 @@ def read_records(args: argparse.Namespace) -> Iterable[dict[str, Any]]:
         yield dict(row)
 
 
-def format_role_labels(labels: Any, stats: CleanStats) -> str:
+def format_role_labels(labels: Any, stats: CleanStats, name_map: dict[int, str]) -> str:
     if not isinstance(labels, dict):
         return "unknown"
     parts = []
     for raw_name, raw_label in labels.items():
-        name = clean_text(raw_name, stats)
-        label = clean_text(raw_label, stats)
+        name = clean_text(raw_name, stats, name_map)
+        label = clean_text(raw_label, stats, name_map)
         parts.append(f"{name}: {label}")
     return "; ".join(parts) if parts else "unknown"
 
 
-def build_speech_output(response: dict[str, Any], stats: CleanStats) -> dict[str, str] | None:
+def build_speech_output(response: dict[str, Any], stats: CleanStats, name_map: dict[int, str]) -> dict[str, str] | None:
     speech = response.get("speech")
     if not speech:
         return None
-    self_present = clean_text(response.get("self_present", "unknown"), stats)
-    role_labels = format_role_labels(response.get("role_label"), stats)
-    vote = clean_text(response.get("call_for_vote", "None"), stats)
+    self_present = clean_text(response.get("self_present", "unknown"), stats, name_map)
+    role_labels = format_role_labels(response.get("role_label"), stats, name_map)
+    vote = clean_text(response.get("call_for_vote", "None"), stats, name_map)
     reasoning = (
         f"I plan to present myself as {self_present}. "
         f"My current read on other players is: {role_labels}. "
         f"My intended vote direction is {vote}."
     )
-    return {"reasoning": clean_text(reasoning, stats), "say": clean_text(speech, stats)}
+    return {"reasoning": clean_text(reasoning, stats, name_map), "say": clean_text(speech, stats, name_map)}
 
 
-def build_vote_output(response: dict[str, Any], stats: CleanStats) -> dict[str, str] | None:
+def build_vote_output(response: dict[str, Any], stats: CleanStats, name_map: dict[int, str]) -> dict[str, str] | None:
     vote = response.get("voting_player")
     reason = response.get("voting_reason") or response.get("notes")
     if vote in (None, "") or not reason:
-        return build_identity_summary_output(response, stats)
-    return {"reasoning": clean_text(reason, stats), "vote": clean_text(f"Player {vote}", stats)}
+        return build_identity_summary_output(response, stats, name_map)
+    return {"reasoning": clean_text(reason, stats, name_map), "vote": clean_text(f"Player {vote}", stats, name_map)}
 
 
-def build_identity_summary_output(response: dict[str, Any], stats: CleanStats) -> dict[str, str] | None:
+def build_identity_summary_output(response: dict[str, Any], stats: CleanStats, name_map: dict[int, str]) -> dict[str, str] | None:
     identity_items = []
     for key, value in response.items():
         if re.fullmatch(r"Player\s+\d{1,2}", str(key)):
-            identity_items.append(f"{clean_text(key, stats)}: {clean_text(value, stats)}")
+            identity_items.append(f"{clean_text(key, stats, name_map)}: {clean_text(value, stats, name_map)}")
     if not identity_items:
         return None
     summary = "My current identity assessment is: " + "; ".join(identity_items) + "."
@@ -267,18 +300,18 @@ def build_identity_summary_output(response: dict[str, Any], stats: CleanStats) -
     return {"reasoning": reasoning, "summary": summary}
 
 
-def build_action_output(response: dict[str, Any], stats: CleanStats) -> dict[str, str] | None:
-    reason = clean_text(response.get("reason", ""), stats) or "I choose the most strategically useful target based on the current game state."
+def build_action_output(response: dict[str, Any], stats: CleanStats, name_map: dict[int, str]) -> dict[str, str] | None:
+    reason = clean_text(response.get("reason", ""), stats, name_map) or "I choose the most strategically useful target based on the current game state."
     if response.get("kill") not in (None, ""):
-        return {"reasoning": reason, "remove": clean_text(f"Player {response['kill']}", stats)}
+        return {"reasoning": reason, "remove": clean_text(f"Player {response['kill']}", stats, name_map)}
     if response.get("inquired") not in (None, ""):
-        return {"reasoning": reason, "investigate": clean_text(f"Player {response['inquired']}", stats)}
+        return {"reasoning": reason, "investigate": clean_text(f"Player {response['inquired']}", stats, name_map)}
     if response.get("guard") not in (None, ""):
-        return {"reasoning": reason, "protect": clean_text(f"Player {response['guard']}", stats)}
+        return {"reasoning": reason, "protect": clean_text(f"Player {response['guard']}", stats, name_map)}
     if response.get("heal") not in (None, "") and str(response.get("heal")) not in {"0", "None", "none", ""}:
-        return {"reasoning": reason, "protect": clean_text(f"Player {response['heal']}", stats)}
+        return {"reasoning": reason, "protect": clean_text(f"Player {response['heal']}", stats, name_map)}
     if response.get("poison") not in (None, "") and str(response.get("poison")) not in {"0", "None", "none", ""}:
-        return {"reasoning": reason, "remove": clean_text(f"Player {response['poison']}", stats)}
+        return {"reasoning": reason, "remove": clean_text(f"Player {response['poison']}", stats, name_map)}
     return None
 
 
@@ -298,17 +331,22 @@ def schema_hint(output: dict[str, str]) -> str:
     raise ValueError("Unsupported output schema")
 
 
-def build_instruction(row: dict[str, Any], output: dict[str, str], meta: dict[str, Any], stats: CleanStats) -> str:
+def build_instruction(row: dict[str, Any], output: dict[str, str], meta: dict[str, Any], stats: CleanStats, name_map: dict[int, str]) -> str:
     source_prompt = "\n\n".join(part for part in [row.get("instruction", ""), row.get("prompt", "")] if part)
-    source_prompt = clean_text(source_prompt, stats)
-    turn = clean_text(meta.get("turn", "unknown turn"), stats)
-    role = clean_text(meta.get("role", "unknown role"), stats)
-    name = player_name(meta.get("player_id", 0)) if meta.get("player_id") else "the current player"
+    source_prompt = clean_text(source_prompt, stats, name_map)
+    turn = clean_text(meta.get("turn", "unknown turn"), stats, name_map)
+    role = clean_text(meta.get("role", "unknown role"), stats, name_map)
+    name = player_name(meta.get("player_id"), name_map) if meta.get("player_id") else "the current player"
     state = f"GAME STATE:\n- Current turn: {turn}.\n- You are {name} the {role}."
     return "\n\n".join([GAME_PROMPT, state, source_prompt, schema_hint(output)])
 
 
+def record_contains_chinese(record: dict[str, str]) -> bool:
+    return CHINESE_RE.search(json.dumps(record, ensure_ascii=False)) is not None
+
+
 def convert_record(row: dict[str, Any], stats: CleanStats) -> dict[str, str] | None:
+    name_map: dict[int, str] = {}
     try:
         meta = parse_json(row.get("meta"))
         response = parse_json(row.get("response"))
@@ -318,11 +356,11 @@ def convert_record(row: dict[str, Any], stats: CleanStats) -> dict[str, str] | N
 
     meta_type = str(meta.get("type", "")).lower()
     if meta_type == "speech":
-        output = build_speech_output(response, stats)
+        output = build_speech_output(response, stats, name_map)
     elif meta_type == "vote":
-        output = build_vote_output(response, stats)
+        output = build_vote_output(response, stats, name_map)
     elif meta_type == "action":
-        output = build_action_output(response, stats)
+        output = build_action_output(response, stats, name_map)
     else:
         output = None
 
@@ -330,12 +368,16 @@ def convert_record(row: dict[str, Any], stats: CleanStats) -> dict[str, str] | N
         stats.dropped_unsupported_schema += 1
         return None
 
-    instruction = build_instruction(row, output, meta, stats)
-    return {
+    instruction = build_instruction(row, output, meta, stats, name_map)
+    record = {
         "instruction": instruction,
         "input": "",
         "output": json.dumps(output, ensure_ascii=False, separators=(",", ":")),
     }
+    if record_contains_chinese(record):
+        stats.dropped_chinese += 1
+        return None
+    return record
 
 
 def write_records(records: Iterable[dict[str, Any]], args: argparse.Namespace) -> CleanStats:
@@ -347,9 +389,10 @@ def write_records(records: Iterable[dict[str, Any]], args: argparse.Namespace) -
     with output_path.open("w", encoding="utf-8") as f:
         for row in tqdm(records, desc="cleaning"):
             stats.total += 1
+            dropped_chinese_before = stats.dropped_chinese
             record = convert_record(row, stats)
             if record is None:
-                if args.strict:
+                if args.strict and stats.dropped_chinese == dropped_chinese_before:
                     raise ValueError(f"Failed to convert row #{stats.total}")
                 continue
             if args.dedupe:
