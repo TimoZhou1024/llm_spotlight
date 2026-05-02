@@ -166,6 +166,13 @@ TRANSLATION_FIXES: list[tuple[re.Pattern[str], str]] = [
 class CleanStats:
     total: int = 0
     kept: int = 0
+    debate: int = 0
+    vote: int = 0
+    summary: int = 0
+    action: int = 0
+    action_investigate: int = 0
+    action_protect: int = 0
+    action_remove: int = 0
     dropped_parse_error: int = 0
     dropped_unsupported_schema: int = 0
     dropped_chinese: int = 0
@@ -390,6 +397,25 @@ def convert_record(row: dict[str, Any], stats: CleanStats) -> dict[str, str] | N
     return record
 
 
+def count_record_type(record: dict[str, str], stats: CleanStats) -> None:
+    output = json.loads(record["output"])
+    if "say" in output:
+        stats.debate += 1
+    elif "vote" in output:
+        stats.vote += 1
+    elif "summary" in output:
+        stats.summary += 1
+    elif "investigate" in output:
+        stats.action += 1
+        stats.action_investigate += 1
+    elif "protect" in output:
+        stats.action += 1
+        stats.action_protect += 1
+    elif "remove" in output:
+        stats.action += 1
+        stats.action_remove += 1
+
+
 def write_records(records: Iterable[dict[str, Any]], args: argparse.Namespace) -> CleanStats:
     stats = CleanStats()
     output_path = Path(args.output)
@@ -411,6 +437,7 @@ def write_records(records: Iterable[dict[str, Any]], args: argparse.Namespace) -
                     continue
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
             stats.kept += 1
+            count_record_type(record, stats)
             if args.max_samples and stats.kept >= args.max_samples:
                 break
 
