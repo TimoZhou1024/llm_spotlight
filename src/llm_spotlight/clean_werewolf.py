@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import random
 import re
 from collections import Counter
 from dataclasses import asdict, dataclass
@@ -210,6 +212,15 @@ def player_name(number: str | int, name_map: dict[int, str]) -> str:
     return name_map[player_number]
 
 
+def build_name_map(row: dict[str, Any], seed: str) -> dict[int, str]:
+    row_fingerprint = json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)
+    digest = hashlib.sha256(f"{seed}\0{row_fingerprint}".encode("utf-8")).digest()
+    rng = random.Random(int.from_bytes(digest[:8], "big"))
+    names = NAME_POOL.copy()
+    rng.shuffle(names)
+    return {player_number: names[player_number - 1] for player_number in range(1, len(names) + 1)}
+
+
 def replace_player_names(text: Any, stats: CleanStats, name_map: dict[int, str]) -> str:
     text = normalize_whitespace(text)
 
@@ -382,8 +393,8 @@ def record_contains_chinese(record: dict[str, str]) -> bool:
     return CHINESE_RE.search(json.dumps(record, ensure_ascii=False)) is not None
 
 
-def convert_record(row: dict[str, Any], stats: CleanStats) -> dict[str, str] | None:
-    name_map: dict[int, str] = {}
+def convert_record(row: dict[str, Any], stats: CleanStats, name_seed: str = "0") -> dict[str, str] | None:
+    name_map = build_name_map(row, name_seed)
     try:
         meta = parse_json(row.get("meta"))
         response = parse_json(row.get("response"))
@@ -446,7 +457,7 @@ def write_records(records: Iterable[dict[str, Any]], args: argparse.Namespace) -
         for row in tqdm(records, desc="cleaning"):
             stats.total += 1
             dropped_chinese_before = stats.dropped_chinese
-            record = convert_record(row, stats)
+            record = convert_record(row, stats, args.name_seed)
             if record is None:
                 if args.strict and stats.dropped_chinese == dropped_chinese_before:
                     raise ValueError(f"Failed to convert row #{stats.total}")
@@ -473,6 +484,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input", help="Optional local .json/.jsonl file for debugging.")
     parser.add_argument("--output", default="data/processed/werewolf_sft.jsonl")
     parser.add_argument("--max-samples", type=int, default=0)
+    parser.add_argument("--name-seed", default="0", help="Seed for deterministic per-record player name shuffling.")
     parser.add_argument("--dedupe", action="store_true", help="Drop exact duplicate output strings.")
     parser.add_argument("--strict", action="store_true", help="Raise if a row cannot be converted.")
     return parser
