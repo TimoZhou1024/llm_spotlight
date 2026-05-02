@@ -61,6 +61,16 @@ NAME_POOL = [
     "Oscar",
 ]
 
+NO_TARGET = "nobody"
+ABSTAIN_VOTE = "abstain"
+ACTION_TARGET_FIELDS = (
+    ("kill", "remove"),
+    ("inquired", "investigate"),
+    ("guard", "protect"),
+    ("heal", "protect"),
+    ("poison", "remove"),
+)
+
 GAME_PROMPT = """You are playing a digital version of the social deduction game Werewolf (also known as Mafia).
 - Keep your answers strictly under 500 words.
 
@@ -80,7 +90,8 @@ DEBATE_SCHEMA_HINT = """Follow the Werewolf Arena debate output style and produc
 }
 ```"""
 
-VOTE_SCHEMA_HINT = """Follow the Werewolf Arena vote output style and produce exactly this JSON schema:
+VOTE_SCHEMA_HINT = """Follow the Werewolf Arena vote output style and produce exactly this JSON schema.
+If the player chooses to abstain instead of voting for a player, set "vote" to "abstain".
 
 ```json
 {
@@ -89,7 +100,8 @@ VOTE_SCHEMA_HINT = """Follow the Werewolf Arena vote output style and produce ex
 }
 ```"""
 
-INVESTIGATE_SCHEMA_HINT = """Follow the Werewolf Arena investigate output style and produce exactly this JSON schema:
+INVESTIGATE_SCHEMA_HINT = """Follow the Werewolf Arena investigate output style and produce exactly this JSON schema.
+If no player target is specified, set "investigate" to "nobody".
 
 ```json
 {
@@ -98,7 +110,8 @@ INVESTIGATE_SCHEMA_HINT = """Follow the Werewolf Arena investigate output style 
 }
 ```"""
 
-REMOVE_SCHEMA_HINT = """Follow the Werewolf Arena remove output style and produce exactly this JSON schema:
+REMOVE_SCHEMA_HINT = """Follow the Werewolf Arena remove output style and produce exactly this JSON schema.
+If no player target is specified or the player chooses not to remove anyone, set "remove" to "nobody".
 
 ```json
 {
@@ -107,7 +120,8 @@ REMOVE_SCHEMA_HINT = """Follow the Werewolf Arena remove output style and produc
 }
 ```"""
 
-PROTECT_SCHEMA_HINT = """Follow the Werewolf Arena protect output style and produce exactly this JSON schema:
+PROTECT_SCHEMA_HINT = """Follow the Werewolf Arena protect output style and produce exactly this JSON schema.
+If no player target is specified or the player chooses not to protect anyone, set "protect" to "nobody".
 
 ```json
 {
@@ -235,6 +249,14 @@ def clean_player_target(value: Any, stats: CleanStats, name_map: dict[int, str])
     return clean_text(f"Player {value}", stats, name_map)
 
 
+def has_action_value(response: dict[str, Any], field: str) -> bool:
+    return response.get(field) not in (None, "")
+
+
+def is_abstain_vote(value: Any) -> bool:
+    return normalize_whitespace(value).lower() == ABSTAIN_VOTE
+
+
 def parse_json(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
@@ -299,6 +321,8 @@ def build_speech_output(response: dict[str, Any], stats: CleanStats, name_map: d
 def build_vote_output(response: dict[str, Any], stats: CleanStats, name_map: dict[int, str]) -> dict[str, str] | None:
     vote = response.get("voting_player")
     reason = response.get("voting_reason") or response.get("notes")
+    if is_abstain_vote(vote) and reason:
+        return {"reasoning": clean_text(reason, stats, name_map), "vote": ABSTAIN_VOTE}
     vote_target = clean_player_target(vote, stats, name_map)
     if vote_target is None or not reason:
         return build_identity_summary_output(response, stats, name_map)
@@ -319,16 +343,12 @@ def build_identity_summary_output(response: dict[str, Any], stats: CleanStats, n
 
 def build_action_output(response: dict[str, Any], stats: CleanStats, name_map: dict[int, str]) -> dict[str, str] | None:
     reason = clean_text(response.get("reason", ""), stats, name_map) or "I choose the most strategically useful target based on the current game state."
-    if (target := clean_player_target(response.get("kill"), stats, name_map)) is not None:
-        return {"reasoning": reason, "remove": target}
-    if (target := clean_player_target(response.get("inquired"), stats, name_map)) is not None:
-        return {"reasoning": reason, "investigate": target}
-    if (target := clean_player_target(response.get("guard"), stats, name_map)) is not None:
-        return {"reasoning": reason, "protect": target}
-    if (target := clean_player_target(response.get("heal"), stats, name_map)) is not None:
-        return {"reasoning": reason, "protect": target}
-    if (target := clean_player_target(response.get("poison"), stats, name_map)) is not None:
-        return {"reasoning": reason, "remove": target}
+    for field, output_key in ACTION_TARGET_FIELDS:
+        if (target := clean_player_target(response.get(field), stats, name_map)) is not None:
+            return {"reasoning": reason, output_key: target}
+    for field, output_key in ACTION_TARGET_FIELDS:
+        if has_action_value(response, field):
+            return {"reasoning": reason, output_key: NO_TARGET}
     return None
 
 
