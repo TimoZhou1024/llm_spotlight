@@ -185,7 +185,7 @@ def normalize_whitespace(text: Any) -> str:
 def player_name(number: str | int, name_map: dict[int, str]) -> str:
     player_number = int(number)
     if player_number not in name_map:
-        name_map[player_number] = NAME_POOL[len(name_map) % len(NAME_POOL)]
+        name_map[player_number] = NAME_POOL[(player_number - 1) % len(NAME_POOL)]
     return name_map[player_number]
 
 
@@ -217,6 +217,15 @@ def fix_translated_terms(text: Any, stats: CleanStats) -> str:
 
 def clean_text(text: Any, stats: CleanStats, name_map: dict[int, str]) -> str:
     return fix_translated_terms(replace_player_names(text, stats, name_map), stats)
+
+
+def clean_player_target(value: Any, stats: CleanStats, name_map: dict[int, str]) -> str | None:
+    value = normalize_whitespace(value)
+    if not re.fullmatch(r"\d{1,2}", value):
+        return None
+    if int(value) <= 0:
+        return None
+    return clean_text(f"Player {value}", stats, name_map)
 
 
 def parse_json(value: Any) -> dict[str, Any]:
@@ -283,9 +292,10 @@ def build_speech_output(response: dict[str, Any], stats: CleanStats, name_map: d
 def build_vote_output(response: dict[str, Any], stats: CleanStats, name_map: dict[int, str]) -> dict[str, str] | None:
     vote = response.get("voting_player")
     reason = response.get("voting_reason") or response.get("notes")
-    if vote in (None, "") or not reason:
+    vote_target = clean_player_target(vote, stats, name_map)
+    if vote_target is None or not reason:
         return build_identity_summary_output(response, stats, name_map)
-    return {"reasoning": clean_text(reason, stats, name_map), "vote": clean_text(f"Player {vote}", stats, name_map)}
+    return {"reasoning": clean_text(reason, stats, name_map), "vote": vote_target}
 
 
 def build_identity_summary_output(response: dict[str, Any], stats: CleanStats, name_map: dict[int, str]) -> dict[str, str] | None:
@@ -302,16 +312,16 @@ def build_identity_summary_output(response: dict[str, Any], stats: CleanStats, n
 
 def build_action_output(response: dict[str, Any], stats: CleanStats, name_map: dict[int, str]) -> dict[str, str] | None:
     reason = clean_text(response.get("reason", ""), stats, name_map) or "I choose the most strategically useful target based on the current game state."
-    if response.get("kill") not in (None, ""):
-        return {"reasoning": reason, "remove": clean_text(f"Player {response['kill']}", stats, name_map)}
-    if response.get("inquired") not in (None, ""):
-        return {"reasoning": reason, "investigate": clean_text(f"Player {response['inquired']}", stats, name_map)}
-    if response.get("guard") not in (None, ""):
-        return {"reasoning": reason, "protect": clean_text(f"Player {response['guard']}", stats, name_map)}
-    if response.get("heal") not in (None, "") and str(response.get("heal")) not in {"0", "None", "none", ""}:
-        return {"reasoning": reason, "protect": clean_text(f"Player {response['heal']}", stats, name_map)}
-    if response.get("poison") not in (None, "") and str(response.get("poison")) not in {"0", "None", "none", ""}:
-        return {"reasoning": reason, "remove": clean_text(f"Player {response['poison']}", stats, name_map)}
+    if (target := clean_player_target(response.get("kill"), stats, name_map)) is not None:
+        return {"reasoning": reason, "remove": target}
+    if (target := clean_player_target(response.get("inquired"), stats, name_map)) is not None:
+        return {"reasoning": reason, "investigate": target}
+    if (target := clean_player_target(response.get("guard"), stats, name_map)) is not None:
+        return {"reasoning": reason, "protect": target}
+    if (target := clean_player_target(response.get("heal"), stats, name_map)) is not None:
+        return {"reasoning": reason, "protect": target}
+    if (target := clean_player_target(response.get("poison"), stats, name_map)) is not None:
+        return {"reasoning": reason, "remove": target}
     return None
 
 
