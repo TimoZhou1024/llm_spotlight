@@ -206,7 +206,7 @@ class Player(Deserializable):
 
     result_key, allowed_values = (
         (action, options)
-        if action in ["vote", "remove", "investigate", "protect", "bid"]
+        if action in ["vote", "remove", "investigate", "protect", "bid", "interrupt"]
         else (None, None)
     )
 
@@ -266,6 +266,10 @@ class Player(Deserializable):
         statement = result.get("say", None)
         return statement, log
     return result, log
+  
+  def interrupt(self) -> tuple[str | None, LmLog]:
+    
+    raise NotImplementedError("Interrupt action is not implemented yet.")
 
   def summarize(self) -> tuple[str | None, LmLog]:
     """Summarize the game state."""

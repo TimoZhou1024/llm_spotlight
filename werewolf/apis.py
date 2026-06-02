@@ -18,11 +18,18 @@ import os
 from typing import Any
 
 
-def generate(model, **kwargs):
+def generate(model,interrupt = False, **kwargs):
+    if interrupt:
+        return generate_interrupt(model, **kwargs)
+
     if "KTO" in model or "SFT" in model:
         return generate_kto(model, **kwargs)
     else:
         return generate_openai(model, **kwargs)
+
+def generate_interrupt(model, **kwargs):
+    
+    raise NotImplementedError("Interrupt generation is not implemented yet.")
 
 
 # openai
