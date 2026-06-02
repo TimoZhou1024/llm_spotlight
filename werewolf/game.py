@@ -467,3 +467,13 @@ class RecursiveGameMaster(GameMaster):
       return most_voted
     
     return None
+  
+
+class InterruptGameMaster(GameMaster):
+  def __init__(self, state: State, num_threads: int = 1):
+    super().__init__(state, num_threads)
+    self.interrupted = False
+
+  def run_day_phase(self):
+    
+    raise NotImplementedError("InterruptGameMaster does not implement run_day_phase yet.")
