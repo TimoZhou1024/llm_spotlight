@@ -16,8 +16,10 @@
 
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
+from queue import Empty, Queue
 import random
-from typing import List
+import threading
+from typing import Any, Iterable, List, Optional, Tuple
 import copy
 
 import tqdm
@@ -474,6 +476,230 @@ class InterruptGameMaster(GameMaster):
     super().__init__(state, num_threads)
     self.interrupted = False
 
+  def _coerce_interrupt_result(self, result: Any) -> bool:
+    """Normalize different interrupt return styles to a boolean."""
+    if isinstance(result, tuple):
+      result = result[0]
+    if isinstance(result, str):
+      lowered = result.strip().lower()
+      if lowered in {"true", "1", "yes"}:
+        return True
+      if lowered in {"false", "0", "no", ""}:
+        return False
+    return bool(result)
+
+  def _broadcast_debate_chunk(
+      self,
+      speaker_name: str,
+      chunk: str,
+  ) -> None:
+    """Print a streamed chunk as it arrives."""
+    tqdm.tqdm.write(f"{speaker_name}: {chunk}")
+
+  def _run_interrupt_check(
+      self,
+      speaker_name: str,
+      next_speaker_name: str,
+      speech_queue: Queue,
+      speech_finished_event: threading.Event,
+      stop_event: threading.Event,
+      result_box: dict[str, Any],
+  ):
+    """Let the next speaker watch the stream and decide whether to interrupt."""
+    transcript = ""
+    buffer = ""
+    player = self.state.players[next_speaker_name]
+
+    try:
+      while not stop_event.is_set():
+        try:
+          item = speech_queue.get(timeout=0.05)
+        except Empty:
+          if result_box.get("done"):
+            break
+          continue
+
+        if item is None:
+          break
+        if isinstance(item, Exception):
+          result_box["error"] = item
+          stop_event.set()
+          break
+        
+        buffer += item
+        if len(buffer) < 100:
+          continue
+        else:
+          transcript += buffer
+          buffer = ""
+
+        # try:
+        #   should_interrupt = player.interrupt(
+        #       current_speaker=speaker_name,
+        #       current_speech=transcript,
+        #   )
+        # except NotImplementedError:
+        #   should_interrupt = False
+
+        # result_box["value"] = self._coerce_interrupt_result(should_interrupt)
+
+        result_box["value"] = (random.randint(0,9) == 0) ## test mod
+
+        print(f"\n [Testing] Next player choice:{result_box["value"]}\n")
+        if result_box["value"] and not speech_finished_event.is_set():
+          stop_event.set()
+          break
+        if result_box["value"] and speech_finished_event.is_set():
+          result_box["value"] = False
+    except Exception as exc:  # noqa: BLE001
+      result_box["error"] = exc
+      result_box["value"] = False
+      stop_event.set()
+    finally:
+      result_box["done"] = True
+
+  def _run_debate_turn(self, speaker_name: str, next_speaker: Optional[str]) -> bool:
+    """Run one speaker's turn and return whether it was interrupted."""
+    player = self.state.players[speaker_name]
+    reasoning, reasoning_log = player.reason()
+    if reasoning is None:
+      # raise ValueError(f"{speaker_name} did not return a valid reasoning.")
+      print(f"{speaker_name} did not return a valid reasoning.")
+      reasoning = ""
+
+    if player.gamestate:
+      player.gamestate.set_last_thought(reasoning)
+
+    speech_stream = player.say()
+    stop_event = threading.Event()
+    speech_finished_event = threading.Event()
+    display_queue: Queue = Queue()
+    interrupt_queue: Queue = Queue()
+    interrupt_state: dict[str, Any] = {"done": False, "value": False}
+    interrupt_thread: Optional[threading.Thread] = None
+    speech_chunks: list[str] = []
+    speech_error: Optional[Exception] = None
+
+    if next_speaker:
+      interrupt_thread = threading.Thread(
+          target=self._run_interrupt_check,
+          args=(
+          speaker_name,
+          next_speaker,
+          interrupt_queue,
+          speech_finished_event,
+          stop_event,
+          interrupt_state,
+          ),
+          daemon=True,
+      )
+      interrupt_thread.start()
+
+    def speech_worker():
+      try:
+        for chunk in speech_stream:
+          if stop_event.is_set():
+            break
+          display_queue.put(chunk)
+          interrupt_queue.put(chunk)
+        display_queue.put(None)
+        interrupt_queue.put(None)
+        speech_finished_event.set()
+      except Exception as exc:  # noqa: BLE001
+        display_queue.put(exc)
+        interrupt_queue.put(exc)
+
+    debate_thread = threading.Thread(target=speech_worker, daemon=True)
+    debate_thread.start()
+
+    while True:
+      if stop_event.is_set() and display_queue.empty():
+        break
+
+      try:
+        item = display_queue.get(timeout=0.05)
+      except Empty:
+        if not debate_thread.is_alive() and display_queue.empty():
+          break
+        continue
+
+      if item is None:
+        speech_finished_event.set()
+        break
+      if isinstance(item, Exception):
+        speech_error = item
+        break
+
+      speech_chunk = item
+      if not speech_chunk:
+        continue
+
+      speech_chunks.append(speech_chunk)
+      self._broadcast_debate_chunk(speaker_name, speech_chunk)
+      if stop_event.is_set():
+        self.interrupted = True
+        break
+
+    debate_thread.join()
+    if interrupt_thread is not None:
+      interrupt_thread.join()
+
+    if "error" in interrupt_state:
+      raise interrupt_state["error"]
+    if speech_error is not None:
+      raise speech_error
+
+    speech = "".join(speech_chunks)
+    self.this_round.debate.append((speaker_name, speech))
+    for name in self.this_round.players:
+      current_player = self.state.players[name]
+      if current_player.gamestate:
+        current_player.gamestate.update_debate(speaker_name, speech)
+      else:
+        raise ValueError(f"{name}.gamestate needs to be initialized.")
+
+    debate_log = speech_stream.log or LmLog(
+        prompt=speech_stream.prompt,
+        raw_resp=speech,
+        result={"reasoning": reasoning, "say": speech},
+    )
+    debate_log.result = {
+        "reasoning": reasoning,
+        "say": speech,
+        "interrupted": bool(interrupt_state.get("value", False)),
+    }
+    self.this_round_log.debate.append((speaker_name, debate_log))
+
+    interrupted = bool(interrupt_state.get("value", False))
+    if interrupted and next_speaker:
+      tqdm.tqdm.write(
+          f"打断成功: {next_speaker} 打断了 {speaker_name} 的发言。"
+      )
+
+    return interrupted
+
   def run_day_phase(self):
-    
-    raise NotImplementedError("InterruptGameMaster does not implement run_day_phase yet.")
+    random.shuffle(self.this_round.players)
+
+    speaker_idx = 0
+    while speaker_idx < len(self.this_round.players):
+      speaker_name = self.this_round.players[speaker_idx]
+      if not speaker_name:
+        raise ValueError("run_day_phase did not return a valid player.")
+
+      next_speaker = (
+          self.this_round.players[speaker_idx + 1]
+          if speaker_idx + 1 < len(self.this_round.players)
+          else None
+      )
+
+      self.interrupted = False
+      self._run_debate_turn(speaker_name, next_speaker)
+      speaker_idx += 1
+
+    votes, vote_logs = self.run_voting()
+    self.this_round.votes.append(votes)
+    self.this_round_log.votes.append(vote_logs)
+
+    for player, vote in self.this_round.votes[-1].items():
+      tqdm.tqdm.write(f"{player} voted to remove {vote}")

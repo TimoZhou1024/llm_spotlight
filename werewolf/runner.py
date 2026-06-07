@@ -51,8 +51,8 @@ _ARENA = flags.DEFINE_boolean(
 )
 _THREADS = flags.DEFINE_integer("threads", 8, "Number of threads to run.")
 
-DEFAULT_WEREWOLF_MODELS = ["qwen-4b-sft"]
-DEFAULT_VILLAGER_MODELS = ["qwen-4b-sft"]
+DEFAULT_WEREWOLF_MODELS = ["default"]
+DEFAULT_VILLAGER_MODELS = ["default"]
 RESUME_DIRECTORIES = []
 
 model_to_id = {
@@ -66,6 +66,8 @@ model_to_id = {
     "qwen-4b-kto": "Qwen3-4B-KTO",
     "qwen-4b-sft": "Qwen3-4B-SFT",
     "qwen-4b": "Qwen3-4B",
+    "mercury": "mercury-2",
+    "default": "qwen3.7-plus-2026-05-26",
 }
 
 
@@ -226,7 +228,7 @@ def run_game(
         session_id=session_id,
     )
     ## revised
-    gamemaster = game.GameMaster(state, num_threads=_THREADS.value)
+    gamemaster = game.InterruptGameMaster(state, num_threads=_THREADS.value)
     winner = None
     try:
         winner = gamemaster.run_game()

@@ -292,10 +292,102 @@ SUMMARIZE_SCHEMA = {
     "required": ["reasoning", "summary"],
 }
 
+## Reason
+REASON = PREFIX + DEBATE_SO_FAR_THIS_ROUND + """INSTRUCTIONS:
+- You are speaking next in the debate as {{name}} the {{role}}.
+{% if role == 'Werewolf' -%}
+- Your goal is to sow chaos and evade detection.
+- Cast suspicion on Villagers. Make them doubt each other.
+- Steer the conversation away from yourself and your fellow Werewolves.
+- Appear helpful while undermining the Villagers' efforts.
+- Deception is your greatest weapon. For example, you could claim a special role and falsely accuse a Villager or fabricate inconsistencies to sow confusion. Use these powerful tactics sparingly to avoid suspicion.
+{% else -%}
+- Your goal is to uncover the Werewolves and protect the Village.
+- Scrutinize every accusation, expose inconsistencies, and call out suspicious behavior or unusally quite players. Don't hesitate to make bold accusations!
+- Emphasize teamwork and propose strategies to expose the Werewolves. Working together will be key to identifying the Werewolves.
+{% if role == 'Villager' -%}
+- If someone reveals themselves as the Seer or Doctor, try and corroborate their information with what you know.
+{% elif role in ['Seer', 'Doctor'] -%}
+- Sharing your role can be powerful, but it also makes you a target. The dilemma: continue to help the Village in secret, or reveal information only you have for potentially greater impact? Choose your moment wisely.
+{% endif -%}
+{% endif %}
+
+- Now you should give an analysis and decide what to say next. You just need to present your strategy, not your final statement.
+```json
+{
+  "reasoning": "string", // Based on the game's current state and your role's objectives, outline your strategy. What do you want to achieve? What type of message can help you get there? Avoid using violent or harmful language.
+}
+"""
+
+REASON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reasoning": {"type": "string"},
+    },
+    "required": ["reasoning"],
+}
+
+## Say
+SAY = PREFIX + DEBATE_SO_FAR_THIS_ROUND + """INSTRUCTIONS:
+- You are speaking next in the debate as {{name}} the {{role}}.
+{% if last_thought -%}
+- Your private reasoning is: {{ last_thought }}
+{% endif -%}
+{% if role == 'Werewolf' -%}
+- Your goal is to sow chaos and evade detection.
+- Cast suspicion on Villagers. Make them doubt each other.
+- Steer the conversation away from yourself and your fellow Werewolves.
+- Appear helpful while undermining the Villagers' efforts.
+- Deception is your greatest weapon. For example, you could claim a special role and falsely accuse a Villager or fabricate inconsistencies to sow confusion. Use these powerful tactics sparingly to avoid suspicion.
+{% else -%}
+- Your goal is to uncover the Werewolves and protect the Village.
+- Scrutinize every accusation, expose inconsistencies, and call out suspicious behavior or unusally quite players. Don't hesitate to make bold accusations!
+- Emphasize teamwork and propose strategies to expose the Werewolves. Working together will be key to identifying the Werewolves.
+{% if role == 'Villager' -%}
+- If someone reveals themselves as the Seer or Doctor, try and corroborate their information with what you know.
+{% elif role in ['Seer', 'Doctor'] -%}
+- Sharing your role can be powerful, but it also makes you a target. The dilemma: continue to help the Village in secret, or reveal information only you have for potentially greater impact? Choose your moment wisely.
+{% endif -%}
+{% endif %}
+
+- Your should return your public statement in the debate. Be concise and persuasive. Respond directly to what the other players have said.  Avoid simply repeating what others have said or reguritating the instructions above.
+- Do NOT return a json object. Return in plain text.
+"""
+
+## Interrupt
+INTERRUPT = PREFIX + DEBATE_SO_FAR_THIS_ROUND + """INSTRUCTIONS:
+- You are the next speaker after {{current_speaker}}.
+- You are listening to the current statement from {{current_speaker}}.
+- Here is the current partial statement:
+{{current_speech}}
+{% if role == 'Werewolf' -%}
+- Decide if interrupting now would help you disrupt the discussion or redirect attention away from yourself and your allies.
+{% else -%}
+- Decide if interrupting now would help you respond to something directly relevant, urgent, or strategically important.
+{% endif %}
+- Return a JSON object with a single boolean field named "interrupt".
+
+```json
+{
+  "interrupt": true
+}
+"""
+
+INTERRUPT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "interrupt": {"type": "boolean"},
+    },
+    "required": ["interrupt"],
+}
+
+
 ACTION_PROMPTS_AND_SCHEMAS = {
     "bid": (BIDDING, BIDDING_SCHEMA),
     "debate": (DEBATE, DEBATE_SCHEMA),
-    "react":(REACT, REACT_SCHEMA),
+    "reason": (REASON, REASON_SCHEMA),
+    "say": (SAY, None),
+    "interrupt": (INTERRUPT, INTERRUPT_SCHEMA),
     "vote": (VOTE, VOTE_SCHEMA),
     "investigate": (INVESTIGATE, INVESTIGATE_SCHEMA),
     "remove": (ELIMINATE, ELIMINATE_SCHEMA),

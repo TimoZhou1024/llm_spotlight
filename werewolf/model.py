@@ -16,9 +16,9 @@ import enum
 import json
 import os
 import random
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
-from werewolf.lm import LmLog, generate
+from werewolf.lm import LmLog, StreamingGeneration, generate, generate_streaming
 from werewolf.prompts import ACTION_PROMPTS_AND_SCHEMAS
 from werewolf.utils import Deserializable
 from werewolf.config import  MAX_DEBATE_TURNS, NUM_PLAYERS
@@ -134,6 +134,7 @@ class Player(Deserializable):
     self.model = model
     self.observations: List[str] = []
     self.bidding_rationale = ""
+    self.last_reasoning = ""
     self.gamestate: Optional[GameView] = None
 
   def initialize_game_view(
@@ -197,18 +198,22 @@ class Player(Deserializable):
       self,
       action: str,
       options: Optional[List[str]] = None,
+      extra_state: Optional[Dict[str, Any]] = None,
   ) -> tuple[Any | None, LmLog]:
     """Helper function to generate player actions."""
     game_state = self._get_game_state()
     if options:
       game_state["options"] = (", ").join(options)
+    if extra_state:
+      game_state.update(extra_state)
     prompt_template, response_schema = ACTION_PROMPTS_AND_SCHEMAS[action]
 
-    result_key, allowed_values = (
-        (action, options)
-        if action in ["vote", "remove", "investigate", "protect", "bid", "interrupt"]
-        else (None, None)
-    )
+    if action == "reason":
+      result_key, allowed_values = "reasoning", None
+    elif action in ["vote", "remove", "investigate", "protect", "bid", "interrupt"]:
+      result_key, allowed_values = action, options
+    else:
+      result_key, allowed_values = None, None
 
     # Set temperature based on allowed_values
     temperature = 0.5 if allowed_values else 1.0
@@ -221,6 +226,31 @@ class Player(Deserializable):
         temperature=temperature,
         allowed_values=allowed_values,
         result_key=result_key,
+    )
+
+  def reason(self) -> tuple[str | None, LmLog]:
+    """Generate the private reasoning for a debate turn."""
+    reasoning, log = self._generate_action("reason", [])
+    if reasoning is not None and self.gamestate:
+      self.last_reasoning = reasoning
+      self.gamestate.set_last_thought(reasoning)
+    return reasoning, log
+
+  def say(self) -> StreamingGeneration:
+    """Generate the public debate statement as a stream of chunks."""
+    if not self.gamestate:
+      raise ValueError(
+          "GameView not initialized. Call initialize_game_view() first."
+      )
+    prompt_template, response_schema = ACTION_PROMPTS_AND_SCHEMAS["say"]
+    return generate_streaming(
+        prompt_template,
+        response_schema,
+        self._get_game_state(),
+        model=self.model,
+        temperature=1.0,
+        allowed_values=None,
+        result_key=None,
     )
 
   def vote(self) -> tuple[str | None, LmLog]:
@@ -251,25 +281,37 @@ class Player(Deserializable):
     return bid, log
 
   def debate(self) -> tuple[str | None, LmLog]:
-    """Engage in the debate."""
-    result, log = self._generate_action("debate", [])
-    if result is not None:
-      # print(f"Debate generation result: {result}")
-      say = result.get("say", None)
-      thought = result.get("reasoning", "")
-      return say, log
-      ## React module
-      self.gamestate.set_statement(say)
-      self.gamestate.set_last_thought(thought)
-      result, log = self._generate_action("react", [])
-      if result is not None:
-        statement = result.get("say", None)
-        return statement, log
-    return result, log
-  
-  def interrupt(self) -> tuple[str | None, LmLog]:
-    
-    raise NotImplementedError("Interrupt action is not implemented yet.")
+    """Engage in the debate using split reasoning and streaming speech."""
+    thought, thought_log = self.reason()
+    if thought is None:
+      return None, thought_log
+
+    speech_stream = self.say()
+    speech = ""
+    for chunk in speech_stream:
+      speech += chunk
+
+    log = speech_stream.log or LmLog(
+        prompt=speech_stream.prompt,
+        raw_resp=speech,
+        result={"reasoning": thought, "say": speech},
+    )
+    return speech, log
+
+  def interrupt(self, current_speaker: str = "", current_speech: str = "") -> bool:
+    """Decide whether to interrupt the current speaker."""
+    _, log = self._generate_action(
+        "interrupt",
+        extra_state={
+            "current_speaker": current_speaker,
+            "current_speech": current_speech,
+        },
+    )
+    if log.result is None:
+      return False
+    if isinstance(log.result, dict):
+      return bool(log.result.get("interrupt", False))
+    return bool(log.result)
 
   def summarize(self) -> tuple[str | None, LmLog]:
     """Summarize the game state."""
