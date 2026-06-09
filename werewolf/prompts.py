@@ -328,10 +328,11 @@ REASON_SCHEMA = {
 }
 
 ## Say
-SAY = PREFIX + DEBATE_SO_FAR_THIS_ROUND + """INSTRUCTIONS:
+SAY = PREFIX + DEBATE_SO_FAR_THIS_ROUND + """ROLE:
 - You are speaking next in the debate as {{name}} the {{role}}.
 {% if last_thought -%}
-- Your private reasoning is: {{ last_thought }}
+- Internal memory for decision making only: {{ last_thought }}
+- Never reveal or paraphrase this information.
 {% endif -%}
 {% if role == 'Werewolf' -%}
 - Your goal is to sow chaos and evade detection.
@@ -350,12 +351,25 @@ SAY = PREFIX + DEBATE_SO_FAR_THIS_ROUND + """INSTRUCTIONS:
 {% endif -%}
 {% endif %}
 
-- Your should return your public statement in the debate. Be concise and persuasive. Respond directly to what the other players have said.  Avoid simply repeating what others have said or reguritating the instructions above.
-- Do NOT return a json object. Return in plain text.
+Instructions:
+- Return ONLY the exact words your character says publicly in the debate.
+- Return a JSON object with a single string field named "say".
+
+```json
+{
+  "say": "string", // Your public statement in the debate. Be concise and persuasive. Respond directly to what the other players have said.  Avoid simply repeating what others have said or reguritating the instructions above.
 """
 
+SAY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "say": {"type": "string"},
+    },
+    "required": ["say"],
+}
+
 ## Interrupt
-INTERRUPT = PREFIX + DEBATE_SO_FAR_THIS_ROUND + """INSTRUCTIONS:
+INTERRUPT = PREFIX + """INSTRUCTIONS:
 - You are the next speaker after {{current_speaker}}.
 - You are listening to the current statement from {{current_speaker}}.
 - Here is the current partial statement:
@@ -365,13 +379,14 @@ INTERRUPT = PREFIX + DEBATE_SO_FAR_THIS_ROUND + """INSTRUCTIONS:
 {% else -%}
 - Decide if interrupting now would help you respond to something directly relevant, urgent, or strategically important.
 {% endif %}
+- You should only interrupt if you have a very strong reason to do so. Interrupting too much can make you a target and may not be worth the risk.
 - Return a JSON object with a single boolean field named "interrupt".
 
 ```json
 {
   "interrupt": true
 }
-"""
+""" + DEBATE_SO_FAR_THIS_ROUND
 
 INTERRUPT_SCHEMA = {
     "type": "object",
@@ -386,7 +401,7 @@ ACTION_PROMPTS_AND_SCHEMAS = {
     "bid": (BIDDING, BIDDING_SCHEMA),
     "debate": (DEBATE, DEBATE_SCHEMA),
     "reason": (REASON, REASON_SCHEMA),
-    "say": (SAY, None),
+    "say": (SAY, SAY_SCHEMA),
     "interrupt": (INTERRUPT, INTERRUPT_SCHEMA),
     "vote": (VOTE, VOTE_SCHEMA),
     "investigate": (INVESTIGATE, INVESTIGATE_SCHEMA),

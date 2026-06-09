@@ -51,6 +51,7 @@ outputs/
 checkpoints/
 wandb/
 mlruns/
+serving/
 *.log
 
 # Environment variables and secrets

@@ -533,19 +533,22 @@ class InterruptGameMaster(GameMaster):
           transcript += buffer
           buffer = ""
 
-        # try:
-        #   should_interrupt = player.interrupt(
-        #       current_speaker=speaker_name,
-        #       current_speech=transcript,
-        #   )
-        # except NotImplementedError:
-        #   should_interrupt = False
+        try:
+          should_interrupt = player.interrupt(
+              current_speaker=speaker_name,
+              current_speech=transcript,
+          )
+        except NotImplementedError:
+          should_interrupt = False
 
-        # result_box["value"] = self._coerce_interrupt_result(should_interrupt)
+        result_box["value"] = self._coerce_interrupt_result(should_interrupt)
 
-        result_box["value"] = (random.randint(0,9) == 0) ## test mod
 
-        print(f"\n [Testing] Next player choice:{result_box["value"]}\n")
+        ## Random Intterupt for testing
+        # result_box["value"] = (random.randint(0,9) == 0) 
+
+        # print(f"\n [Testing] Next player choice:{result_box["value"]}\n")
+
         if result_box["value"] and not speech_finished_event.is_set():
           stop_event.set()
           break
@@ -569,6 +572,8 @@ class InterruptGameMaster(GameMaster):
 
     if player.gamestate:
       player.gamestate.set_last_thought(reasoning)
+
+    tqdm.tqdm.write(f"{speaker_name} reasoning: {reasoning}")
 
     speech_stream = player.say()
     stop_event = threading.Event()
@@ -600,6 +605,7 @@ class InterruptGameMaster(GameMaster):
         for chunk in speech_stream:
           if stop_event.is_set():
             break
+
           display_queue.put(chunk)
           interrupt_queue.put(chunk)
         display_queue.put(None)
@@ -612,6 +618,7 @@ class InterruptGameMaster(GameMaster):
     debate_thread = threading.Thread(target=speech_worker, daemon=True)
     debate_thread.start()
 
+    tqdm.tqdm.write(f"{speaker_name}: ")
     while True:
       if stop_event.is_set() and display_queue.empty():
         break
@@ -635,7 +642,8 @@ class InterruptGameMaster(GameMaster):
         continue
 
       speech_chunks.append(speech_chunk)
-      self._broadcast_debate_chunk(speaker_name, speech_chunk)
+      # self._broadcast_debate_chunk(speaker_name, speech_chunk)
+      print(speech_chunk, end="", flush=True)
       if stop_event.is_set():
         self.interrupted = True
         break
@@ -673,7 +681,7 @@ class InterruptGameMaster(GameMaster):
     interrupted = bool(interrupt_state.get("value", False))
     if interrupted and next_speaker:
       tqdm.tqdm.write(
-          f"打断成功: {next_speaker} 打断了 {speaker_name} 的发言。"
+          f"\n 打断成功: {next_speaker} 打断了 {speaker_name} 的发言。\n"
       )
 
     return interrupted

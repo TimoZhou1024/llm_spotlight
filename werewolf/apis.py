@@ -29,7 +29,7 @@ def _get_client_and_base_url(model: str):
     if "KTO" in model:
         port = os.getenv("KTO_API_PORT", "9001")
         return OpenAI(api_key="EMPTY", base_url=f"http://localhost:{port}/v1")
-    if "SFT" in model:
+    if "Qwen3-4B" in model:
         port = os.getenv("API_PORT", "9000")
         return OpenAI(api_key="EMPTY", base_url=f"http://localhost:{port}/v1")
     return OpenAI(

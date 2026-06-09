@@ -176,6 +176,10 @@ def generate_streaming(
     """
 
     prompt = format_prompt(prompt_template, worldstate)
+    # print("-" * 50)
+    # print(f"Generated prompt: {prompt}")
+    # print("-" * 50)
+    # exit(1)
     return StreamingGeneration(
         prompt=prompt,
         model=model,

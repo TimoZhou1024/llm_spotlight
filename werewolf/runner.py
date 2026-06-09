@@ -67,7 +67,8 @@ model_to_id = {
     "qwen-4b-sft": "Qwen3-4B-SFT",
     "qwen-4b": "Qwen3-4B",
     "mercury": "mercury-2",
-    "default": "qwen3.7-plus-2026-05-26",
+    "qwen3.7": "qwen3.7-plus-2026-05-26",
+    "default": "Qwen3-4B"
 }
 
 
